@@ -60,19 +60,15 @@ contract AYRA is ERC20, Ownable {
         require(balanceOf(msg.sender) >= amount, "insufficient balance for staking.");
         require(block.timestamp <= _stakingPeriod, "The time is over staking period.");
 
+        _updateReward(msg.sender);
+
         _stakedBalances[msg.sender] += amount;
         require(_stakedBalances[msg.sender] <= _maxStakingAmountPerAccount, "This account overflows staking amount");
         
         _totalStakingAmount += amount;
         require(_totalStakingAmount <= _maxStakingAmount, "Total staking amount overflows its limit.");
-
-        uint availableReward = _getAvailableReward(msg.sender);
-        _rewardedLastTime[msg.sender] = block.timestamp;
-
-        if (availableReward > amount)
-            _transfer(walletOrigin, msg.sender, availableReward - amount);
-        else
-            _transfer(msg.sender, walletOrigin, amount - availableReward);
+        
+        _transfer(msg.sender, walletOrigin, amount);
         
         emit StakingSucceed(msg.sender, _stakedBalances[msg.sender]);
     }
@@ -94,7 +90,7 @@ contract AYRA is ERC20, Ownable {
         }
 
         if (block.timestamp > _stakingFirstPeriod) {
-            uint rewardDays = _stakingPeriod.min(block.timestamp) - _rewardedLastTime[account];
+            uint rewardDays = _stakingPeriod.min(block.timestamp) - _rewardedLastTime[account].max(_stakingFirstPeriod);
             rewardDays /= 1 days;
             reward += rewardDays * _stakedBalances[account] * _stakingSecondPeriodReward / 10000;
         }
@@ -104,14 +100,11 @@ contract AYRA is ERC20, Ownable {
 
     function withdraw(uint amount) public {
         require (_stakedBalances[msg.sender] >= amount, "Can't withdraw more than staked balance");
+
+        _updateReward(msg.sender);
         _stakedBalances[msg.sender] -= amount;
         _totalStakingAmount -= amount;
-
-        uint availableReward = _getAvailableReward(msg.sender);
-        _rewardedLastTime[msg.sender] = block.timestamp;
-
-        _transfer(walletOrigin, msg.sender, amount + availableReward);
-
+        _transfer(walletOrigin, msg.sender, amount);
         emit WithdrawSucceed(msg.sender, _stakedBalances[msg.sender]);
     } 
 
@@ -121,7 +114,13 @@ contract AYRA is ERC20, Ownable {
         uint256 amount
     ) internal override {
         if (from != address(0)) {
-            _balances[from] += _getAvailableReward(from);
+            _updateReward(from);
         }
+    }
+
+    function _updateReward(address account) private {
+        uint availableReward = _getAvailableReward(account);
+        _rewardedLastTime[account] = block.timestamp;
+        _balances[account] += availableReward;
     }
 } 
