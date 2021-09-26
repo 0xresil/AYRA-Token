@@ -47,27 +47,53 @@ contract AYRA is ERC20, Ownable {
     event StakingSucceed(address indexed account, uint256 totalStakedAmount);
     event WithdrawSucceed(address indexed account, uint256 remainedStakedAmount);
 
+    /**
+    * @dev modifier which requires that account must be operator
+    */
     modifier onlyOperator() {
         require(_msgSender() == operatorAddress, "operator: wut?");
         _;
     }
 
+    /**
+    * @dev modifier which requires that walletAddress is not blocked address(walletMarketProtection),
+    * until blocking period.
+    */
     modifier onlyUnblock(address walletAddress) {
         require(walletAddress != walletMarketProtection
                     || block.timestamp > _deployedTime + 1825 days, "This wallet address is blocked for 5 years." );
         _;
     }
 
+    /**
+    * @dev Constructor: mint pre-defined amount of tokens to special wallets.
+     */
     constructor() ERC20("AYRA", "AYRA") {
         operatorAddress = _msgSender();
         //uint totalSupply = 1_000_000_000_000_000 * (10 ** decimals());
+
+        // 40% of total supply to walletOrigin
         _mint(walletOrigin, 400_000_000_000_000 * (10 ** decimals()));
+
+        // 10% of total supply to walletMarketProtection
         _mint(walletMarketProtection, 100_000_000_000_000 * (10 ** decimals()));
+
+        // 9% of total supply to walletFoundingPartners
         _mint(walletFoundingPartners, 90_000_000_000_000 * (10 ** decimals()));
+
+        // 1% of total supply to walletBlockedFoundingPartners
         _mint(walletBlockedFoundingPartners, 10_000_000_000_000 * (10 ** decimals()));
+
+        // 10% of total supply to walletSocialPartners
         _mint(walletSocialPartners, 100_000_000_000_000 * (10 ** decimals()));
+
+        // 18% of total supply to walletProgrammersAndPartners
         _mint(walletProgrammersAndPartners, 180_000_000_000_000 * (10 ** decimals()));
+
+        // 7% of total supply to walletPrivateInvestors
         _mint(walletPrivateInvestors, 70_000_000_000_000 * (10 ** decimals()));
+
+        // 5% of total supply to walletAidsAndDonations
         _mint(walletAidsAndDonations, 50_000_000_000_000 * (10 ** decimals()));
     }
 
@@ -81,8 +107,14 @@ contract AYRA is ERC20, Ownable {
     }
 
     /**
-    * @dev 
-    **/
+     * @dev Destroys `amount` tokens from `walletOrigin`, reducing the
+     * total supply.
+     *
+     * Requirements:
+     *
+     * - total burning amount can not exceed `_maxBurnAmount`
+     * - burning moment have to be 90 days later from `_lastBurnDay`
+     */
     function burn(uint amount) external onlyOperator {
         
         require(_burnedAmount + amount < _maxBurnAmount, "Burning too much.");
@@ -93,6 +125,18 @@ contract AYRA is ERC20, Ownable {
         _burnedAmount += amount;
     }
 
+    /**
+     * @dev Stake `amount` tokens from `msg.sender` to `walletOrigin`, calculate reward upto now.
+     *
+     * Emits a {StakingSucceed} event with `account` and total staked balance of `account`
+     *
+     * Requirements:
+     *
+     * - `account` must have at least `amount` tokens
+     * - staking moment have to be in staking period
+     * - staked balance of each account can not exceed `_maxStakingAmountPerAccount`
+     * - total staking amount can not exceed `_totalStakingAmount`
+     */
     function stake(uint amount) external {
         
         address account = _msgSender();
@@ -118,21 +162,29 @@ contract AYRA is ERC20, Ownable {
         emit StakingSucceed(account, _stakedBalances[account]);
     }
 
+    /**
+     * @dev Returns the amount of tokens owned by `account`. Something different from ERC20 is
+     * adding reward which is not yet appended to account wallet.
+     */
     function balanceOf(address account) public view override returns (uint) {
         return ERC20.balanceOf(account) + _getAvailableReward(account);
     }
 
     /**
-     * @dev Internal function to invoke {IERC721Receiver-onERC721Received} on a target address.
-     * The call is not executed if the target address is not a contract.
+     * @dev Get account's reward which is yielded after last rewarded time.
      *
-     * @param account address representing the previous owner of the given token ID
-     * @return uint whether the call correctly returned the expected magic value
+     * @notice if getting moment is after stakingPeriod, the reward must be 0.
+     * 
+     * First `if` statement is in case of `lastTime` is before firstPeriod.
+     *         `lastTime`  block.timestamp(if1)                   block.timestamp(if2)
+     * ||----------|---------------|------------||------------------------|-----------||
+     *              firstPeriod                             secondPeriod
+     *
+     * Second `if` statement is in case of block.timestamp is in secondPeriod.
      */
     function _getAvailableReward(address account) private view returns (uint) {
-        require(_rewardedLastTime[account] <= block.timestamp, "last reward time is bigger than now!");
 
-        if (_rewardedLastTime[account] > _stakingPeriod) return 0;
+        if (block.timestamp > _stakingPeriod) return 0;
         
         uint reward = 0;
         if (_rewardedLastTime[account] <= _stakingFirstPeriod) {
@@ -150,6 +202,15 @@ contract AYRA is ERC20, Ownable {
         return reward;
     }
 
+    /**
+     * @dev Withdraw `amount` tokens from stakingPool(`walletOrigin`) to `msg.sender` address, calculate reward upto now.
+     *
+     * Emits a {WithdrawSucceed} event with `account` and total staked balance of `account`
+     *
+     * Requirements:
+     *
+     * - staked balance of `msg.sender` must be at least `amount`.
+     */
     function withdraw(uint amount) external {
         address account = _msgSender();
         require (_stakedBalances[account] >= amount, "Can't withdraw more than staked balance");
@@ -163,12 +224,24 @@ contract AYRA is ERC20, Ownable {
         emit WithdrawSucceed(account, _stakedBalances[account]);
     } 
 
+    /**
+     * @dev Hook that is called before any transfer of tokens. 
+     * Here, update from's balance by adding not-yet-appended reward.
+     *
+     * Requirements:
+     *
+     * - blocked wallet (walletMarketProtection) can't be tranferred or transfer any balance.
+     */
     function _beforeTokenTransfer(address from, address to, uint256) internal override onlyUnblock(from) onlyUnblock(to) {
         if (from != address(0)) {
             _updateReward(from);
         }
     }
 
+    /**
+     * @dev Get account's available reward which is yielded from last rewarded moment.
+     * And append available reward to account's balance.
+     */
     function _updateReward(address account) private {
         uint availableReward = _getAvailableReward(account);
         _rewardedLastTime[account] = block.timestamp;
